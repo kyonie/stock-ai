@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>株価スクリーニングアプリケーション</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="{{ url_for('static', filename='js/enhanced_screening_vgc_with_vwap_margin_lending.js') }}?v={{ range(1, 10000) | random }}"></script>
+    <style>
+        .screening-card {
+            margin-bottom: 1rem;
+        }
+        .range-group {
+            margin-bottom: 0.5rem;
+        }
+        .range-inputs {
+            display: flex;
+            align-items: center;
+        }
+        .range-inputs input {
+            width: 100px;
+        }
+        .range-separator {
+            margin: 0 10px;
+        }
+        .card-body-scroll {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        /* フィルター適用されたらハイライト */
+        .filter-active {
+            background-color: #e8f4ff;
+        }
+        /* デモモードセクションを非表示にする */
+        #demoModeSection {
+            display: none;
+        }
+        /* ソート可能な列のスタイル */
+        .sortable {
+            cursor: pointer;
+            position: relative;
+            padding-right: 20px;
+            user-select: none;
+        }
+        .sortable:hover {
+            background-color: #f0f0f0;
+        }
+        .sortable::after {
+            content: '\2195';
+            position: absolute;
+            right: 5px;
+            opacity: 0.5;
+        }
+        .sortable.sort-asc::after {
+            content: '\2191';
+            opacity: 1;
+        }
+        .sortable.sort-desc::after {
+            content: '\2193';
+            opacity: 1;
+        }
+        /* 結果統計の表示 */
+        .result-stats {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        /* 出来高・信用指標の追加列スタイル */
+        .table-responsive {
+            overflow-x: auto;
+        }
+        .extended-columns th,
+        .extended-columns td {
+            white-space: nowrap;
+        }
+        /* 日付セレクターのスタイル */
+        .date-selector {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #dee2e6;
+        }
+        .date-info {
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+        .date-badge {
+            font-size: 0.85rem;
+        }
+        /* チャートパターンの説明 */
+        .pattern-info {
+            font-size: 0.85em;
+            color: #6c757d;
+            font-style: italic;
+        }
+        /* 貸借銘柄チェックボックスのスタイル */
+        .margin-lending-check {
+            background-color: #e3f2fd;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid mt-4">
+        <div class="row justify-content-center">
+            <div class="col-lg-11">
+                <div class="card shadow">
+                    <div class="card-header bg-primary text-white">
+                        <h1 class="text-center">株価スクリーニングアプリケーション</h1>
+                    </div>
+                    <div class="card-body">
+                        <!-- 日付選択セクション（新規追加） -->
+                        <div class="date-selector">
+                            <div class="row align-items-center">
+                                <div class="col-md-6">
+                                    <h5 class="mb-2"><i class="fas fa-calendar-alt"></i> データ日付選択</h5>
+                                    <div class="d-flex align-items-center gap-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="dateOption" id="latestDate" value="latest" checked>
+                                            <label class="form-check-label" for="latestDate">
+                                                最新データ <span id="latestDateBadge" class="badge bg-success date-badge">Loading...</span>
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="dateOption" id="specificDate" value="specific">
+                                            <label class="form-check-label" for="specificDate">
+                                                日付指定
+                                            </label>
+                                        </div>
+                                        <select id="dateSelect" class="form-select" style="width: 200px;" disabled>
+                                            <option value="">日付を選択...</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="date-info text-end">
+                                        <p class="mb-1">選択中のデータ日付: <strong id="selectedDateDisplay">最新データ</strong></p>
+                                        <p class="mb-0">データ件数: <span id="dataCountInfo">-</span></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 検索フィルターセクション -->
+                        <div class="row">
+                            <!-- 基本条件 -->
+                            <div class="col-md-6 col-lg-4">
+                                <div class="card screening-card">
+                                    <div class="card-header bg-info text-white">
+                                        <h5 class="mb-0">基本条件</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="mb-3">
+                                            <label for="marketSelect" class="form-label">市場</label>
+                                            <select id="marketSelect" class="form-select">
+                                                <option value="">すべて</option>
+                                                <option value="東証PR">プライム</option>
+                                                <option value="東証ST">スタンダード</option>
+                                                <option value="東証GR">グロース</option>
+                                                <option value="東証">東証（その他）</option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="sectorSelect" class="form-label">業種</label>
+                                            <select id="sectorSelect" class="form-select">
+                                                <option value="">すべて</option>
+                                                <option value="水産・農林">水産・農林</option>
+                                                <option value="鉱業">鉱業</option>
+                                                <option value="建設">建設</option>
+                                                <option value="食料品">食料品</option>
+                                                <option value="繊維製品">繊維製品</option>
+                                                <option value="パルプ・紙">パルプ・紙</option>
+                                                <option value="化学">化学</option>
+                                                <option value="医薬品">医薬品</option>
+                                                <option value="石油・石炭">石油・石炭</option>
+                                                <option value="ゴム製品">ゴム製品</option>
+                                                <option value="ガラス土石">ガラス土石</option>
+                                                <option value="鉄鋼">鉄鋼</option>
+                                                <option value="非鉄金属">非鉄金属</option>
+                                                <option value="金属製品">金属製品</option>
+                                                <option value="機械">機械</option>
+                                                <option value="電気機器">電気機器</option>
+                                                <option value="輸送用機器">輸送用機器</option>
+                                                <option value="精密機器">精密機器</option>
+                                                <option value="その他製品">その他製品</option>
+                                                <option value="電気・ガス">電気・ガス</option>
+                                                <option value="陸運">陸運</option>
+                                                <option value="海運">海運</option>
+                                                <option value="空運">空運</option>
+                                                <option value="倉庫・運輸">倉庫・運輸</option>
+                                                <option value="情報通信">情報通信</option>
+                                                <option value="卸売">卸売</option>
+                                                <option value="小売">小売</option>
+                                                <option value="銀行">銀行</option>
+                                                <option value="証券・先物">証券・先物</option>
+                                                <option value="保険">保険</option>
+                                                <option value="その他金融">その他金融</option>
+                                                <option value="不動産">不動産</option>
+                                                <option value="サービス">サービス</option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">株価</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minPrice" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxPrice" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">前日比変化率 (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minChangePercent" class="form-control" placeholder="下限" step="0.1">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxChangePercent" class="form-control" placeholder="上限" step="0.1">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 財務指標1 -->
+                            <div class="col-md-6 col-lg-4">
+                                <div class="card screening-card">
+                                    <div class="card-header bg-warning text-dark">
+                                        <h5 class="mb-0">財務指標1</h5>
+                                    </div>
+                                    <div class="card-body card-body-scroll">
+                                        <div class="range-group">
+                                            <label class="form-label">ROE (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minRoe" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxRoe" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">VWAP</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minVwap" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxVwap" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">PER (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minPer" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxPer" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">PBR (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minPbr" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxPbr" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">配当利回り (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minDividendYield" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxDividendYield" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">発行済株式数（百万株）</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minSharesIssued" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxSharesIssued" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">時価総額（億円）</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minMarketCap" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxMarketCap" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 出来高・価格指標 -->
+                            <div class="col-md-6 col-lg-4">
+                                <div class="card screening-card">
+                                    <div class="card-header bg-primary text-white">
+                                        <h5 class="mb-0">出来高・価格指標</h5>
+                                    </div>
+                                    <div class="card-body card-body-scroll">
+                                        <div class="range-group">
+                                            <label class="form-label">出来高率</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minVolumeRatio" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxVolumeRatio" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">出来高乖離率 (20日)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minVolumeDeviation" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxVolumeDeviation" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">出来高乖離率 (100日)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minVolumeDeviation100" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxVolumeDeviation100" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">株価乖離率 (20日)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minPriceDeviation20" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxPriceDeviation20" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">株価乖離率 (100日)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minPriceDeviation100" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxPriceDeviation100" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <hr>
+                                        <h6>テクニカル指標</h6>
+                                        <div class="range-group">
+                                            <label class="form-label">RSI (0-100)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minRsi" class="form-control" placeholder="下限" min="0" max="100" step="0.1">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxRsi" class="form-control" placeholder="上限" min="0" max="100" step="0.1">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">年初来高値比率 (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minYearlyHighRatio" class="form-control" placeholder="下限" step="0.1">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxYearlyHighRatio" class="form-control" placeholder="上限" step="0.1">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">年初来安値比率 (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minYearlyLowRatio" class="form-control" placeholder="下限" step="0.1">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxYearlyLowRatio" class="form-control" placeholder="上限" step="0.1">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 信用指標 -->
+                            <div class="col-md-6 col-lg-4">
+                                <div class="card screening-card">
+                                    <div class="card-header bg-danger text-white">
+                                        <h5 class="mb-0">信用指標</h5>
+                                    </div>
+                                    <div class="card-body card-body-scroll">
+                                        <!-- 貸借銘柄チェックボックス -->
+                                        <div class="margin-lending-check">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="marginLendingOnly">
+                                                <label class="form-check-label" for="marginLendingOnly">
+                                                    <strong>貸借銘柄のみ</strong>
+                                                    <small class="text-muted d-block">信用取引の貸借銘柄に限定</small>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- 信用買い残高偏差（20日） -->
+                                        <div class="range-group">
+                                            <label class="form-label">信用買い残高偏差（20日）(%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minMarginBuyingDeviation20" class="form-control" placeholder="下限" step="0.1">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxMarginBuyingDeviation20" class="form-control" placeholder="上限" step="0.1">
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- 信用買い出来高比率 -->
+                                        <div class="range-group">
+                                            <label class="form-label">信用買い出来高比率 (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minMarginBuyingVolumeRatio" class="form-control" placeholder="下限" step="0.1">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxMarginBuyingVolumeRatio" class="form-control" placeholder="上限" step="0.1">
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- 日証金関連 -->
+                                        <hr>
+                                        <h6>日証金関連</h6>
+                                        <div class="range-group">
+                                            <label class="form-label">融資残高（百万株）</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minJsfLoanBalance" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxJsfLoanBalance" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">貸株残高（百万株）</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minJsfStockLendingBalance" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxJsfStockLendingBalance" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">差引倍率</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minJsfDiffRatio" class="form-control" placeholder="下限" step="0.1">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxJsfDiffRatio" class="form-control" placeholder="上限" step="0.1">
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- 貸株関連 -->
+                                        <hr>
+                                        <h6>貸株関連</h6>
+                                        <div class="range-group">
+                                            <label class="form-label">貸株返済率 (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minStockLendingRepaymentRatio" class="form-control" placeholder="下限" step="0.1">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxStockLendingRepaymentRatio" class="form-control" placeholder="上限" step="0.1">
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- その他信用指標 -->
+                                        <hr>
+                                        <h6>その他指標</h6>
+                                        <div class="range-group">
+                                            <label class="form-label">(信用売残＋貸株残)/発行済株式数 (%)</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minShortRatio" class="form-control" placeholder="下限" step="0.1">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxShortRatio" class="form-control" placeholder="上限" step="0.1">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">信用倍率</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minMarginRatio" class="form-control" placeholder="下限" step="0.01">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxMarginRatio" class="form-control" placeholder="上限" step="0.01">
+                                            </div>
+                                        </div>
+                                        <div class="range-group">
+                                            <label class="form-label">日証金差引残高（百万株）</label>
+                                            <div class="range-inputs">
+                                                <input type="number" id="minJsfNetBalance" class="form-control" placeholder="下限">
+                                                <span class="range-separator">〜</span>
+                                                <input type="number" id="maxJsfNetBalance" class="form-control" placeholder="上限">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- チャートパターン -->
+                            <div class="col-md-6 col-lg-4">
+                                <div class="card screening-card">
+                                    <div class="card-header bg-success text-white">
+                                        <h5 class="mb-0">チャートパターン</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternUpperShadow">
+                                            <label class="form-check-label" for="patternUpperShadow">
+                                                上ヒゲ陽線
+                                            </label>
+                                        </div>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternDoji">
+                                            <label class="form-check-label" for="patternDoji">
+                                                十字線
+                                            </label>
+                                        </div>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternGoldenCross">
+                                            <label class="form-check-label" for="patternGoldenCross">
+                                                5日WMA/5日MAゴールデンクロス
+                                            </label>
+                                        </div>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternDoubledPrice">
+                                            <label class="form-check-label" for="patternDoubledPrice">
+                                                年初来安値から2倍
+                                            </label>
+                                        </div>
+                                        <hr>
+                                        <h6>移動平均線パターン</h6>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternPriceMa25Ma50Ma75">
+                                            <label class="form-check-label" for="patternPriceMa25Ma50Ma75">
+                                                株価 > 25日MA > 50日MA > 75日MA
+                                            </label>
+                                        </div>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternMa50Ma25Ma75">
+                                            <label class="form-check-label" for="patternMa50Ma25Ma75">
+                                                50日MA > 25日MA > 75日MA
+                                            </label>
+                                        </div>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternMa25PriceMa75">
+                                            <label class="form-check-label" for="patternMa25PriceMa75">
+                                                25日MA > 株価 > 75日MA
+                                            </label>
+                                        </div>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternMa50PriceMa75">
+                                            <label class="form-check-label" for="patternMa50PriceMa75">
+                                                50日MA > 株価 > 75日MA
+                                            </label>
+                                        </div>
+                                        <hr>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternMaGoldenCross">
+                                            <label class="form-check-label" for="patternMaGoldenCross">
+                                                5日/25日移動平均線ゴールデンクロス
+                                            </label>
+                                            <div class="pattern-info">
+                                                5日移動平均線が25日移動平均線を上向きにクロス
+                                            </div>
+                                        </div>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternVolumeGoldenCross">
+                                            <label class="form-check-label" for="patternVolumeGoldenCross">
+                                                出来高5日WMA/出来高5日MAゴールデンクロス
+                                            </label>
+                                            <div class="pattern-info">
+                                                出来高の5日加重移動平均が出来高の5日移動平均を上向きにクロス
+                                            </div>
+                                        </div>
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" id="patternVwapGoldenCross">
+                                            <label class="form-check-label" for="patternVwapGoldenCross">
+                                                5日VWAPゴールデンクロス
+                                            </label>
+                                            <div class="pattern-info">
+                                                VWAPの5日移動平均が5日加重移動平均を上向きにクロス
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- アクションボタン -->
+                            <div class="col-md-6 col-lg-4">
+                                <div class="card screening-card">
+                                    <div class="card-header bg-secondary text-white">
+                                        <h5 class="mb-0">アクション</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <button id="startScreening" class="btn btn-primary w-100 mb-3">
+                                            <i class="fas fa-filter"></i> スクリーニング開始
+                                        </button>
+                                        <button id="resetFilters" class="btn btn-outline-secondary w-100 mb-2">
+                                            <i class="fas fa-redo"></i> 条件をリセット
+                                        </button>
+                                        <button id="clearCache" class="btn btn-outline-warning w-100">
+                                            <i class="fas fa-sync-alt"></i> キャッシュをクリア
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 結果表示セクション -->
+                        <div id="resultContainer" class="mt-4 d-none">
+                            <h3>スクリーニング結果</h3>
+                            <div id="loadingMessage" class="alert alert-info d-none">
+                                <i class="fas fa-spinner fa-spin"></i> 銘柄をスクリーニング中...
+                            </div>
+                            <div id="errorMessage" class="alert alert-danger d-none"></div>
+                            
+                            <!-- 結果統計とAI分析ボタン -->
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <div id="resultStats" class="result-stats d-none">
+                                    <strong>該当銘柄数:</strong> <span id="resultCount">0</span>件
+                                    <span class="ms-3"><strong>データ日付:</strong> <span id="resultDate">-</span></span>
+                                </div>
+                                <div id="aiAnalysisSection" class="d-none">
+                                    <button class="btn btn-success" onclick="openAIAnalysis()">
+                                        <i class="fas fa-robot"></i> AI分析
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- 適用されたフィルター -->
+                            <div id="activeFilters" class="d-none mb-3">
+                                <strong>適用条件:</strong>
+                                <div id="filterTags" class="mt-2"></div>
+                            </div>
+                            
+                            <div id="resultTable" class="table-responsive d-none">
+                                <table class="table table-striped table-hover extended-columns">
+                                    <thead>
+                                        <tr>
+                                            <th>銘柄コード</th>
+                                            <th>銘柄名</th>
+                                            <th>市場</th>
+                                            <th>業種</th>
+                                            <th class="sortable" data-sort="price">株価</th>
+                                            <th class="sortable" data-sort="change_percent">前日比</th>
+                                            <th class="sortable" data-sort="roe">ROE</th>
+                                            <th class="sortable" data-sort="per">PER</th>
+                                            <th class="sortable" data-sort="pbr">PBR</th>
+                                            <th class="sortable" data-sort="dividend_yield">配当利回り</th>
+                                            <th class="sortable" data-sort="volume_ratio">出来高率</th>
+                                            <th class="sortable" data-sort="volume_deviation_20">出来高乖離率(20日)</th>
+                                            <th class="sortable" data-sort="stock_lending_repayment_ratio">貸株返済率</th>
+                                            <th class="sortable" data-sort="jsf_diff_ratio">差引前日比率</th>
+                                            <th class="sortable" data-sort="short_ratio">空売り比率</th>
+                                            <th class="sortable" data-sort="market_cap">時価総額（億円）</th>
+                                            <th>アクション</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="resultTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
